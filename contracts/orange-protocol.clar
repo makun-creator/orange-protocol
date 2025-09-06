@@ -99,3 +99,110 @@
     executed: bool,
   }
 )
+
+;; Vote tracking per proposal and voter
+(define-map votes
+  {
+    proposal-id: uint,
+    voter: principal,
+  }
+  {
+    amount: uint,
+    support: bool,
+  }
+)
+
+;; Emergency administration privileges
+(define-map emergency-admins
+  principal
+  bool
+)
+
+;; Vote delegation system
+(define-map delegations
+  principal
+  {
+    delegate: principal,
+    amount: uint,
+    expiry: uint,
+  }
+)
+
+;; Investment return distribution pools
+(define-map return-pools
+  uint
+  {
+    total-amount: uint,
+    distributed-amount: uint,
+    distribution-start: uint,
+    distribution-end: uint,
+    claims: (list 200 principal),
+  }
+)
+
+;; Member claims tracking for return pools
+(define-map member-claims
+  {
+    member: principal,
+    pool-id: uint,
+  }
+  {
+    amount: uint,
+    claimed: bool,
+  }
+)
+
+;; EMERGENCY CONTROLS
+
+;; Toggle emergency state for protocol security
+(define-public (set-emergency-state (state bool))
+  (begin
+    (asserts! (is-emergency-admin tx-sender) ERR-NOT-AUTHORIZED)
+    (var-set emergency-state state)
+    (ok true)
+  )
+)
+
+;; Add emergency administrator with validation
+(define-public (add-emergency-admin (admin principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get dao-admin)) ERR-NOT-AUTHORIZED)
+    ;; Prevent contract self-assignment as admin
+    (asserts! (not (is-eq admin (as-contract tx-sender))) ERR-INVALID-PARAMETER)
+    (map-set emergency-admins admin true)
+    (ok true)
+  )
+)
+
+;; DELEGATION SYSTEM
+
+;; Delegate voting power to another member
+(define-public (delegate-votes
+    (delegate-to principal)
+    (amount uint)
+    (expiry uint)
+  )
+  (let (
+      (caller tx-sender)
+      (member-info (unwrap! (get-member-info caller) ERR-NOT-AUTHORIZED))
+    )
+    ;; Comprehensive delegation validation
+    (asserts! (not (is-eq delegate-to caller)) ERR-INVALID-DELEGATE)
+    (asserts! (is-some (get-member-info delegate-to)) ERR-INVALID-DELEGATE)
+    (asserts! (>= (get voting-power member-info) amount) ERR-INSUFFICIENT-FUNDS)
+    (asserts! (> expiry stacks-block-height) ERR-INVALID-PARAMETER)
+
+    ;; Record delegation
+    (map-set delegations caller {
+      delegate: delegate-to,
+      amount: amount,
+      expiry: expiry,
+    })
+
+    ;; Update delegator's voting power
+    (map-set members caller
+      (merge member-info { voting-power: (- (get voting-power member-info) amount) })
+    )
+    (ok true)
+  )
+)
